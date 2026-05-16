@@ -12,6 +12,8 @@ import {
   initDatabase,
   obtenerEstadisticasHoy,
   closeDatabase,
+  guardarWebhook,
+  actualizarMensajeDesdeWebhook,
 } from "./database/db";
 
 // Validar configuración al iniciar
@@ -164,6 +166,111 @@ app.post("/api/prueba-whatsapp", async (req: Request, res: Response) => {
       success: false,
       message: "Error al enviar mensaje de prueba",
     });
+  }
+});
+
+/**
+ * Webhook Meta: verificación del endpoint (GET)
+ * Meta llama a esta ruta al registrar el webhook para confirmar que es válido
+ */
+app.get(config.server.webhookPath, (req: Request, res: Response) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode === "subscribe" && token === config.meta.webhookVerifyToken) {
+    logger.info("✅ Webhook de Meta verificado correctamente");
+    return res.status(200).send(challenge);
+  }
+
+  logger.warn("⚠️  Intento de verificación de webhook con token inválido");
+  return res.sendStatus(403);
+});
+
+/**
+ * Webhook Meta: recibir eventos de estado de mensajes (POST)
+ * Meta envía aquí las actualizaciones: sent, delivered, read, failed
+ */
+app.post(config.server.webhookPath, (req: Request, res: Response) => {
+  // Responder 200 inmediatamente para que Meta no reintente
+  res.sendStatus(200);
+
+  try {
+    const body = req.body;
+
+    if (body.object !== "whatsapp_business_account") return;
+
+    const entries = body.entry || [];
+
+    for (const entry of entries) {
+      const changes = entry.changes || [];
+
+      for (const change of changes) {
+        const value = change.value;
+
+        // Procesar actualizaciones de estado de mensajes enviados
+        const statuses = value?.statuses || [];
+        for (const status of statuses) {
+          const messageId: string = status.id;
+          const estado: string = status.status; // sent, delivered, read, failed
+          const telefono: string = status.recipient_id;
+
+          guardarWebhook({
+            tipo: "status_update",
+            metaMessageId: messageId,
+            telefono,
+            estado,
+            timestampMeta: status.timestamp,
+            payload: status,
+          });
+
+          actualizarMensajeDesdeWebhook(messageId, estado);
+
+          logger.info(`📩 Webhook: mensaje ${messageId} → ${estado} (${telefono})`);
+        }
+
+        // Procesar mensajes entrantes y responder automáticamente
+        const messages = value?.messages || [];
+        for (const message of messages) {
+          const telefono: string = message.from;
+          const tipo: string = message.type;
+
+          guardarWebhook({
+            tipo: "incoming_message",
+            metaMessageId: message.id,
+            telefono,
+            estado: "received",
+            timestampMeta: message.timestamp,
+            payload: message,
+          });
+
+          logger.info(`💬 Mensaje entrante de ${telefono} (tipo: ${tipo})`);
+
+          // Marcar como leído y enviar auto-reply
+          metaWhatsappService.marcarComoLeido(message.id).catch(() => {});
+
+          const textoRespuesta =
+            `Hola 👋 Este número es exclusivo para el envío de *recordatorios de citas* de UOLaser.\n\n` +
+            `Para cancelar o reprogramar su cita, comuníquese con nosotros:\n` +
+            `📱 WhatsApp: *${config.whatsapp.contacto}*\n` +
+            `📞 Teléfono: *${config.whatsapp.telefonoFijo}*`;
+
+          metaWhatsappService.enviarMensajeTexto(telefono, textoRespuesta)
+            .then((resultado) => {
+              if (resultado.success) {
+                logger.info(`✅ Auto-reply enviado a ${telefono}`);
+              } else {
+                logger.warn(`⚠️ No se pudo enviar auto-reply a ${telefono}: ${resultado.error}`);
+              }
+            })
+            .catch((err) => {
+              logger.error(`❌ Error en auto-reply a ${telefono}:`, err.message);
+            });
+        }
+      }
+    }
+  } catch (error) {
+    logger.error("❌ Error procesando webhook de Meta:", error);
   }
 });
 

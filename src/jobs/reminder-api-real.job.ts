@@ -5,6 +5,7 @@ import config from "../config/env";
 import logger from "../utils/logger";
 import apiUOLaserService from "../services/api-uolaser.service.js";
 import metaWhatsappService from "../services/meta-whatsapp.service";
+import googleSheetsService from "../services/google-sheets.service";
 import { guardarMensaje, yaSeEnvioMensaje } from "../database/db";
 
 dayjs.locale("es");
@@ -200,6 +201,16 @@ export async function ejecutarRecordatorios(): Promise<void> {
         logger.warn(
           `⚠️  Saltando cita ${procesada.citaId} - sin teléfono válido`,
         );
+        googleSheetsService.registrarMensaje({
+          paciente: procesada.nombre,
+          telefono: cita.telefono || "sin teléfono",
+          medico: procesada.medico,
+          sede: procesada.sede,
+          fechaCita: procesada.fechaCita,
+          horaCita: procesada.hora,
+          estado: "failed",
+          error: `Número inválido en sistema: "${cita.telefono}"`,
+        }).catch(() => {});
         continue;
       }
 
@@ -230,23 +241,59 @@ export async function ejecutarRecordatorios(): Promise<void> {
             `✅ Enviado a ${procesada.nombre} (${procesada.telefono}) - ID: ${resultado.messageId}`,
           );
 
-          // Guardar en base de datos
           guardarMensaje({
             citaId: procesada.citaId,
             nombrePaciente: procesada.nombre,
             telefono: procesada.telefono,
             mensaje: `Recordatorio para ${procesada.fecha} a las ${procesada.hora}`,
             plantillaId: templateName,
+            metaMessageId: resultado.messageId,
+            estado: "sent",
             fechaCita: procesada.fechaCita,
             medico: procesada.medico,
             sede: procesada.sede,
           });
+
+          googleSheetsService.registrarMensaje({
+            paciente: procesada.nombre,
+            telefono: procesada.telefono,
+            medico: procesada.medico,
+            sede: procesada.sede,
+            fechaCita: procesada.fechaCita,
+            horaCita: procesada.hora,
+            estado: "sent",
+            metaMessageId: resultado.messageId,
+          }).catch(() => {});
 
           exitosos++;
         } else {
           logger.error(
             `❌ Error al enviar a ${procesada.nombre}: ${resultado.error}`,
           );
+
+          guardarMensaje({
+            citaId: procesada.citaId,
+            nombrePaciente: procesada.nombre,
+            telefono: procesada.telefono,
+            mensaje: `Recordatorio para ${procesada.fecha} a las ${procesada.hora}`,
+            plantillaId: templateName,
+            estado: "failed",
+            fechaCita: procesada.fechaCita,
+            medico: procesada.medico,
+            sede: procesada.sede,
+          });
+
+          googleSheetsService.registrarMensaje({
+            paciente: procesada.nombre,
+            telefono: procesada.telefono,
+            medico: procesada.medico,
+            sede: procesada.sede,
+            fechaCita: procesada.fechaCita,
+            horaCita: procesada.hora,
+            estado: "failed",
+            error: resultado.error,
+          }).catch(() => {});
+
           fallidos++;
         }
 
@@ -286,7 +333,7 @@ export function iniciarCronJob(): void {
   const schedule = config.cron.schedule; // "0 8 * * *" = 8:00 AM diario
 
   logger.info("🤖 Iniciando cron job de recordatorios automáticos");
-  logger.info(`   ⏰ Horario: ${schedule} (8:00 AM todos los días)`);
+  logger.info(`   ⏰ Horario: ${schedule}`);
   logger.info(`   🌍 Zona horaria: ${config.cron.timezone}`);
 
   cron.schedule(schedule, ejecutarRecordatorios, {
