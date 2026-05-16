@@ -10,6 +10,7 @@ class ApiUOLaserService {
   private contrasenia: string;
   private token: string | null = null;
   private axiosInstance: AxiosInstance;
+  private readonly MAX_REINTENTOS_AUTH = 2;
 
   constructor() {
     this.baseURL = process.env.API_UOLASER_URL || "";
@@ -63,6 +64,7 @@ class ApiUOLaserService {
     fecha: string,
     medico: string = "",
     sede: string = "",
+    intentoAuth: number = 0,
   ): Promise<any> {
     try {
       // Autenticar si no hay token
@@ -99,14 +101,18 @@ class ApiUOLaserService {
       logger.error("❌ Error al obtener agenda:", response.data);
       return null;
     } catch (error: any) {
-      // Si el token expiró, intentar re-autenticar
-      if (error.response?.status === 401) {
-        logger.warn("⚠️ Token expirado, re-autenticando...");
+      // Si el token expiró, re-autenticar una sola vez
+      if (error.response?.status === 401 && intentoAuth < this.MAX_REINTENTOS_AUTH) {
+        logger.warn(`⚠️ Token expirado, re-autenticando (intento ${intentoAuth + 1}/${this.MAX_REINTENTOS_AUTH})...`);
         this.token = null;
-        return this.obtenerAgenda(fecha, medico, sede);
+        return this.obtenerAgenda(fecha, medico, sede, intentoAuth + 1);
       }
 
-      logger.error("❌ Error al obtener agenda:", error.message);
+      if (error.response?.status === 401) {
+        logger.error("❌ No se pudo re-autenticar después de varios intentos");
+      } else {
+        logger.error("❌ Error al obtener agenda:", error.message);
+      }
       return null;
     }
   }
@@ -131,23 +137,36 @@ class ApiUOLaserService {
 
     logger.info(`👨‍⚕️ Médicos configurados: ${medicos.length}`);
 
-    const agendas: any[] = [];
-
-    // Consultar cada combinación de sede + médico
-    for (const sede of sedes) {
-      for (const medico of medicos) {
-        const agenda = await this.obtenerAgenda(fecha, medico, sede);
-        if (agenda && agenda.data && agenda.data.length > 0) {
-          agendas.push(...agenda.data);
-          logger.info(
-            `  ✅ ${sede} - ${medico}: ${agenda.data.length} cita(s)`,
-          );
-        }
-
-        // Pequeño delay para no saturar la API
-        await new Promise((resolve) => setTimeout(resolve, 200));
+    // Autenticar una sola vez antes de las llamadas paralelas
+    if (!this.token) {
+      const autenticado = await this.autenticar();
+      if (!autenticado) {
+        logger.error("❌ No se pudo autenticar antes de consultar agendas");
+        return [];
       }
     }
+
+    // Construir todas las combinaciones sede + médico
+    const combinaciones = sedes.flatMap((sede) =>
+      medicos.map((medico) => ({ sede, medico })),
+    );
+
+    // Consultar todas las combinaciones en paralelo (el token ya está listo)
+    const resultados = await Promise.all(
+      combinaciones.map(({ sede, medico }) =>
+        this.obtenerAgenda(fecha, medico, sede),
+      ),
+    );
+
+    const agendas: any[] = [];
+
+    resultados.forEach((agenda, i) => {
+      const { sede, medico } = combinaciones[i];
+      if (agenda && agenda.data && agenda.data.length > 0) {
+        agendas.push(...agenda.data);
+        logger.info(`  ✅ ${sede} - ${medico}: ${agenda.data.length} cita(s)`);
+      }
+    });
 
     logger.info(
       `📊 Total de citas en todas las sedes: ${agendas.length} para ${fecha}`,
