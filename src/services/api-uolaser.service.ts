@@ -75,7 +75,7 @@ class ApiUOLaserService {
         }
       }
 
-      logger.info(
+      logger.debug(
         `📅 Obteniendo agenda para ${fecha} - Médico: ${medico || "TODOS"} - Sede: ${sede || "TODAS"}`,
       );
 
@@ -98,7 +98,8 @@ class ApiUOLaserService {
         return response.data;
       }
 
-      logger.error("❌ Error al obtener agenda:", response.data);
+      // Sin resultados para esa combinación — es normal, no es un error
+      logger.debug(`Sin agenda: ${medico} - ${sede} - ${fecha}`);
       return null;
     } catch (error: any) {
       // Si el token expiró, re-autenticar una sola vez
