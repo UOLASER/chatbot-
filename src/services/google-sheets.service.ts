@@ -1,6 +1,7 @@
 import axios from "axios";
 import logger from "../utils/logger";
 
+
 class GoogleSheetsService {
   private appsScriptUrl: string;
   private enabled: boolean;
@@ -36,7 +37,7 @@ class GoogleSheetsService {
         timeStyle: "short",
       });
 
-      await axios.post(this.appsScriptUrl, {
+      const payload = {
         fechaEnvio: ahora,
         paciente: datos.paciente,
         telefono: datos.telefono,
@@ -47,7 +48,10 @@ class GoogleSheetsService {
         estado: datos.estado === "sent" ? "✅ Enviado" : "❌ Fallido",
         metaMessageId: datos.metaMessageId || "",
         error: datos.error || "",
-      });
+      };
+
+      // Usamos GET con params para evitar el redirect 302→405 de Apps Script
+      await axios.get(this.appsScriptUrl, { params: payload });
 
       logger.info(`📊 Registrado en Google Sheets: ${datos.paciente} (${datos.estado})`);
     } catch (error: any) {
