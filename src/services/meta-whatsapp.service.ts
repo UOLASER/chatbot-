@@ -10,7 +10,7 @@ class MetaWhatsAppService {
   private client: AxiosInstance;
   private phoneNumberId: string;
   private accessToken: string;
-  private apiVersion: string = "v18.0";
+  private apiVersion: string = "v22.0";
 
   constructor() {
     this.phoneNumberId = config.meta.phoneNumberId;

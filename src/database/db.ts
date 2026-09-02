@@ -114,6 +114,8 @@ export interface MensajeData {
   telefono: string;
   mensaje: string;
   plantillaId?: string;
+  metaMessageId?: string;
+  estado?: "pending" | "sent" | "delivered" | "read" | "failed";
   fechaCita: string;
   medico: string;
   sede: string;
@@ -123,8 +125,8 @@ export function guardarMensaje(data: MensajeData): number {
   const stmt = dbConnection.prepare(`
     INSERT INTO mensajes (
       cita_id, nombre_paciente, telefono, mensaje, plantilla_id,
-      fecha_cita, medico, sede
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      meta_message_id, estado, fecha_cita, medico, sede
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const result = stmt.run(
@@ -133,6 +135,8 @@ export function guardarMensaje(data: MensajeData): number {
     data.telefono,
     data.mensaje,
     data.plantillaId || null,
+    data.metaMessageId || null,
+    data.estado || "pending",
     data.fechaCita,
     data.medico,
     data.sede
